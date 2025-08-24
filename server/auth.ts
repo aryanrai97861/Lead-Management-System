@@ -103,6 +103,46 @@ export function setupAuth(app: Express) {
         password: hashedPassword,
       });
 
+      // Seed default leads for this new user synchronously so leads are present immediately
+      const seedCount = parseInt(process.env.NEW_USER_LEADS || "100", 10);
+      try {
+        const firstNames = ["John","Jane","Alex","Emily","Chris","Taylor","Jordan","Morgan","Casey","Riley"];
+        const lastNames = ["Smith","Johnson","Brown","Williams","Jones","Davis","Miller","Wilson","Moore","Taylor"];
+        const companies = ["Acme","Globex","Initech","Umbrella","Hooli","Stark","Wayne","Wonka","Soylent","Cyberdyne"];
+        const cities = ["New York","San Francisco","Los Angeles","Chicago","Austin","Seattle","Boston","Denver","Miami","Atlanta"];
+        const states = ["NY","CA","IL","TX","WA","MA","CO","FL","GA","PA"];
+        const sources = ["website","facebook_ads","google_ads","referral","events","other"] as const;
+        const statuses = ["new","contacted","qualified","lost","won"] as const;
+
+        const randomChoice = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)];
+        const randomInt = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+        for (let i = 0; i < seedCount; i++) {
+          const firstName = randomChoice(firstNames);
+          const lastName = randomChoice(lastNames);
+          const email = `${firstName.toLowerCase()}.${lastName.toLowerCase()}.${Date.now()}${i}@example.com`;
+
+          await storage.createLead({
+            firstName,
+            lastName,
+            email,
+            phone: `+1${randomInt(2000000000, 9999999999)}`,
+            company: randomChoice(companies),
+            city: randomChoice(cities),
+            state: randomChoice(states),
+            source: randomChoice(Array.from(sources)) as any,
+            status: randomChoice(Array.from(statuses)) as any,
+            score: randomInt(0, 100),
+            leadValue: parseFloat((Math.random() * 10000).toFixed(2)),
+            lastActivityAt: Math.random() > 0.5 ? new Date(Date.now() - randomInt(0, 1000 * 60 * 60 * 24 * 90)) : undefined,
+            isQualified: Math.random() > 0.7,
+            userId: user.id,
+          } as any);
+        }
+      } catch (err) {
+        console.error("Error seeding leads for new user:", err);
+      }
+
       // Generate JWT token
       const token = generateToken(user.id);
 

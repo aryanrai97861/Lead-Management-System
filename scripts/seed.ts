@@ -88,7 +88,7 @@ async function main() {
   }
 
   for (const l of leadsToCreate) {
-    await storage.createLead(l);
+  await storage.createLead({ ...l, userId: user.id } as any);
   }
 
   console.log("Seeded 100 leads.");

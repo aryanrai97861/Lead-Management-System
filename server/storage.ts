@@ -18,6 +18,7 @@ export interface LeadFilters {
   createdBefore?: Date;
   lastActivityAfter?: Date;
   lastActivityBefore?: Date;
+  userId?: string;
 }
 
 export interface PaginationOptions {
@@ -114,6 +115,11 @@ export class DatabaseStorage implements IStorage {
     // Status filter
     if (filters.status && filters.status.length > 0) {
       conditions.push(inArray(leads.status, filters.status as any));
+    }
+
+    // Owner filter
+    if (filters.userId) {
+      conditions.push(eq(leads.userId, filters.userId));
     }
 
     // Source filter

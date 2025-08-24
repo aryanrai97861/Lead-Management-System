@@ -36,6 +36,8 @@ export const leads = pgTable("leads", {
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
   email: text("email").notNull().unique(),
+  // Owner of the lead
+  userId: varchar("user_id").notNull().references(() => users.id),
   phone: text("phone"),
   company: text("company"),
   city: text("city"),
