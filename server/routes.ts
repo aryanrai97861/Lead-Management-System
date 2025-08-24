@@ -14,10 +14,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Create lead
   app.post("/api/leads", requireAuth, async (req, res, next) => {
     try {
-  // Attach the authenticated user as the owner of the lead
-  const body = { ...req.body, userId: req.user!.id };
-  const validatedData = insertLeadSchema.parse(body);
-  const lead = await storage.createLead(validatedData);
+  const validatedData = insertLeadSchema.parse(req.body);
+  const lead = await storage.createLead(validatedData, (req as any).user.id);
       res.status(201).json(lead);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -65,8 +63,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         createdBefore: createdBefore ? new Date(createdBefore as string) : undefined,
         lastActivityAfter: lastActivityAfter ? new Date(lastActivityAfter as string) : undefined,
         lastActivityBefore: lastActivityBefore ? new Date(lastActivityBefore as string) : undefined,
-  // scope leads to the authenticated user
-  userId: req.user!.id,
       };
 
       const pagination = {

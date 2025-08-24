@@ -18,7 +18,6 @@ export interface LeadFilters {
   createdBefore?: Date;
   lastActivityAfter?: Date;
   lastActivityBefore?: Date;
-  userId?: string;
 }
 
 export interface PaginationOptions {
@@ -42,7 +41,7 @@ export interface IStorage {
   createUser(user: InsertUser): Promise<User>;
   
   // Lead operations
-  createLead(lead: InsertLead): Promise<Lead>;
+  createLead(lead: InsertLead, userId?: string): Promise<Lead>;
   getLead(id: string): Promise<Lead | undefined>;
   getLeads(filters: LeadFilters, pagination: PaginationOptions): Promise<PaginatedResponse<Lead>>;
   updateLead(id: string, updates: UpdateLead): Promise<Lead | undefined>;
@@ -80,13 +79,21 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async createLead(insertLead: InsertLead): Promise<Lead> {
+  async createLead(insertLead: InsertLead, userId?: string): Promise<Lead> {
+    // userId must be provided to associate the lead with a user
+    if (!userId) throw new Error("userId is required to create a lead");
+
+    const insertValues: any = {
+      ...insertLead,
+      // Drizzle decimal columns are often represented as strings when inserting
+      leadValue: insertLead.leadValue !== undefined ? insertLead.leadValue.toString() : undefined,
+      updatedAt: new Date(),
+      userId,
+    };
+
     const [lead] = await db
       .insert(leads)
-      .values({
-        ...insertLead,
-        updatedAt: new Date(),
-      })
+      .values(insertValues)
       .returning();
     return lead;
   }
@@ -115,11 +122,6 @@ export class DatabaseStorage implements IStorage {
     // Status filter
     if (filters.status && filters.status.length > 0) {
       conditions.push(inArray(leads.status, filters.status as any));
-    }
-
-    // Owner filter
-    if (filters.userId) {
-      conditions.push(eq(leads.userId, filters.userId));
     }
 
     // Source filter
@@ -187,9 +189,18 @@ export class DatabaseStorage implements IStorage {
 
     // Get paginated data
     const offset = (pagination.page - 1) * pagination.limit;
-    const orderBy = pagination.sortBy 
-      ? (pagination.sortOrder === 'desc' ? desc(leads[pagination.sortBy as keyof typeof leads]) : asc(leads[pagination.sortBy as keyof typeof leads]))
-      : desc(leads.createdAt);
+    // Map allowed sort keys to actual column objects to satisfy Drizzle's typing
+    const sortableColumns: Record<string, any> = {
+      createdAt: leads.createdAt,
+      updatedAt: leads.updatedAt,
+      score: leads.score,
+      leadValue: leads.leadValue,
+      firstName: leads.firstName,
+      lastName: leads.lastName,
+    };
+
+    const sortColumn = pagination.sortBy && sortableColumns[pagination.sortBy] ? sortableColumns[pagination.sortBy] : leads.createdAt;
+    const orderBy = pagination.sortOrder === 'asc' ? asc(sortColumn) : desc(sortColumn);
 
     const data = await db
       .select()
@@ -209,20 +220,27 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateLead(id: string, updates: UpdateLead): Promise<Lead | undefined> {
+    const setValues: any = {
+      ...updates,
+      updatedAt: new Date(),
+    };
+
+    if (updates.leadValue !== undefined) {
+      setValues.leadValue = updates.leadValue.toString();
+    }
+
     const [lead] = await db
       .update(leads)
-      .set({
-        ...updates,
-        updatedAt: new Date(),
-      })
+      .set(setValues)
       .where(eq(leads.id, id))
       .returning();
     return lead;
   }
 
   async deleteLead(id: string): Promise<boolean> {
-    const result = await db.delete(leads).where(eq(leads.id, id));
-    return result.rowCount > 0;
+  const result = await db.delete(leads).where(eq(leads.id, id));
+  // result.rowCount can be null/undefined depending on the driver; treat truthy as success
+  return !!(result && (result as any).rowCount);
   }
 }
 

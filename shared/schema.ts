@@ -36,12 +36,11 @@ export const leads = pgTable("leads", {
   firstName: text("first_name").notNull(),
   lastName: text("last_name").notNull(),
   email: text("email").notNull().unique(),
-  // Owner of the lead
-  userId: varchar("user_id").notNull().references(() => users.id),
   phone: text("phone"),
   company: text("company"),
   city: text("city"),
   state: text("state"),
+  userId: varchar("user_id").notNull(),
   source: sourceEnum("source").notNull(),
   status: statusEnum("status").notNull().default("new"),
   score: integer("score").default(0),
@@ -74,6 +73,7 @@ export const insertLeadSchema = createInsertSchema(leads, {
   id: true,
   createdAt: true,
   updatedAt: true,
+  userId: true,
 });
 
 export const updateLeadSchema = insertLeadSchema.partial();
