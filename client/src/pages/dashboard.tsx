@@ -9,12 +9,13 @@ import LeadModal from "@/components/lead-modal";
 import { Lead } from "@shared/schema";
 
 export default function Dashboard() {
-  const { user, logoutMutation } = useAuth();
+  const { user, logout } = useAuth();
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingLead, setEditingLead] = useState<Lead | null>(null);
 
   const handleLogout = () => {
-    logoutMutation.mutate();
+    // call the logout helper from the auth provider
+    logout();
   };
 
   const handleCreateLead = () => {
