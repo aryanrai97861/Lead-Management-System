@@ -2,6 +2,9 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic } from "./vite";
 import cookieParser from "cookie-parser";
+import { seedLeadsForUser } from "./seeder";
+import { storage } from "./storage";
+import { hashPassword } from "./auth";
 
 const app = express();
 app.use(express.json());
@@ -50,4 +53,28 @@ app.use((req, res, next) => {
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on port ${PORT}`);
   });
+  
+  // Optional seeding on startup (useful for deployed test environments)
+  if (process.env.SEED_ON_STARTUP === "true") {
+    (async () => {
+      try {
+        const username = process.env.SEED_USERNAME || "testuser";
+        const password = process.env.SEED_PASSWORD || "Test1234";
+
+        let user = await storage.getUserByUsername(username) as any;
+        if (!user) {
+          const hashed = await hashPassword(password);
+          user = await storage.createUser({ username, password: hashed });
+          console.log(`Created seed user ${username}`);
+        } else {
+          console.log(`Seed user already exists: ${username}`);
+        }
+
+        const seedResult = await seedLeadsForUser(user.id, { count: 100, force: false });
+        console.log("Startup seed result:", seedResult);
+      } catch (err) {
+        console.error("Error during startup seeding:", err);
+      }
+    })();
+  }
 })();

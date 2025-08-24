@@ -95,6 +95,11 @@ export class DatabaseStorage implements IStorage {
     // userId must be provided to associate the lead with a user
     if (!userId) throw new Error("userId is required to create a lead");
     // Check for existing email to avoid duplicate key DB errors
+    // Ensure email is unique across user's leads (or globally depending on requirement)
+    const [existing] = await db.select().from(leads).where(eq(leads.email, insertLead.email));
+    if (existing) {
+      throw this.ConflictError("A lead with this email already exists");
+    }
 
     const insertValues: any = {
       ...insertLead,
@@ -357,6 +362,14 @@ export class DatabaseStorage implements IStorage {
       setValues.leadValue = updates.leadValue.toString();
     }
 
+    // If email is being updated, ensure uniqueness for other leads
+    if (updates.email) {
+      const [existing] = await db.select().from(leads).where(and(eq(leads.email, updates.email), not(eq(leads.id, id))));
+      if (existing) {
+        throw this.ConflictError("A lead with this email already exists");
+      }
+    }
+
     const [lead] = await db
       .update(leads)
       .set(setValues)
@@ -378,6 +391,13 @@ export class DatabaseStorage implements IStorage {
 
     if (updates.leadValue !== undefined) {
       setValues.leadValue = updates.leadValue.toString();
+    }
+
+    if (updates.email) {
+      const [existing] = await db.select().from(leads).where(and(eq(leads.email, updates.email), not(eq(leads.id, id))));
+      if (existing) {
+        throw this.ConflictError("A lead with this email already exists");
+      }
     }
 
 
