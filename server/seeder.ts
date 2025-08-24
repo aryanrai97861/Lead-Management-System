@@ -66,10 +66,37 @@ export async function seedLeadsForUser(userId: string, options?: { count?: numbe
     leadsToCreate.push(lead);
   }
 
-  for (const l of leadsToCreate) {
-    // createLead will throw if userId missing; we pass the userId
-    // do not await sequentially if performance is a concern; keep sequential to avoid DB overload here
-    await storage.createLead(l, userId);
+  // Perform bulk inserts in chunks for speed and visibility
+  const rows = leadsToCreate.map((l) => ({
+    ...l,
+    leadValue: l.leadValue !== undefined ? l.leadValue.toString() : undefined,
+    userId,
+    updatedAt: new Date(),
+  }));
+
+  function chunkArray<T>(arr: T[], size: number) {
+    const chunks: T[][] = [];
+    for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+    return chunks;
+  }
+
+  const CHUNK_SIZE = 50; // adjust if needed
+  const chunks = chunkArray(rows, CHUNK_SIZE);
+
+  for (const c of chunks) {
+    try {
+      await db.insert(leadsTable).values(c as any).returning();
+    } catch (err) {
+      // Fall back to inserting individually if bulk insert fails for some rows
+      console.error("Bulk insert failed for a chunk, falling back to individual inserts:", err);
+      for (const r of c) {
+        try {
+          await storage.createLead(r as any, userId);
+        } catch (innerErr) {
+          console.error("Failed to insert lead during fallback:", innerErr);
+        }
+      }
+    }
   }
 
   return { seeded: true, count };

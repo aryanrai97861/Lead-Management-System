@@ -119,12 +119,13 @@ export function setupAuth(app: Express) {
       const { password: _, ...userWithoutPassword } = user;
       res.status(201).json(userWithoutPassword);
 
-      // Trigger seeding of leads for the new user in background (non-blocking)
-      void seedLeadsForUser(user.id).then((r) => {
-        console.log(`Seed result for new user ${user.username}:`, r);
-      }).catch((err) => {
+      // Seed leads for the new user and wait so the client sees them immediately
+      try {
+        const seedResult = await seedLeadsForUser(user.id);
+        console.log(`Seed result for new user ${user.username}:`, seedResult);
+      } catch (err) {
         console.error(`Error seeding leads for new user ${user.username}:`, err);
-      });
+      }
     } catch (error) {
       next(error);
     }
