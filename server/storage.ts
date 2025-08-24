@@ -1,6 +1,6 @@
 import { users, leads, type User, type InsertUser, type Lead, type InsertLead, type UpdateLead } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, or, like, gte, lte, between, inArray, desc, asc, count } from "drizzle-orm";
+import { eq, and, or, like, gte, lte, between, inArray, desc, asc, count, not } from "drizzle-orm";
 import session from "express-session";
 import connectPg from "connect-pg-simple";
 import { pool } from "./db";
@@ -46,12 +46,17 @@ export interface IStorage {
   getLeads(filters: LeadFilters, pagination: PaginationOptions): Promise<PaginatedResponse<Lead>>;
   updateLead(id: string, updates: UpdateLead): Promise<Lead | undefined>;
   deleteLead(id: string): Promise<boolean>;
+  // variants that can enforce ownership
+  getLeadForUser?(id: string, userId: string): Promise<Lead | undefined>;
+  getLeadsForUser?(filters: LeadFilters, pagination: PaginationOptions, userId: string): Promise<PaginatedResponse<Lead>>;
+  updateLeadForUser?(id: string, updates: UpdateLead, userId: string): Promise<Lead | undefined>;
+  deleteLeadForUser?(id: string, userId: string): Promise<boolean>;
   
-  sessionStore: session.SessionStore;
+  sessionStore: any;
 }
 
 export class DatabaseStorage implements IStorage {
-  sessionStore: session.SessionStore;
+  sessionStore: any;
 
   constructor() {
     const PostgresSessionStore = connectPg(session);
@@ -59,6 +64,13 @@ export class DatabaseStorage implements IStorage {
       pool, 
       createTableIfMissing: true 
     });
+  }
+
+  // Simple error class so callers can surface HTTP-like status codes
+  private ConflictError(message: string) {
+    const err: any = new Error(message);
+    err.statusCode = 409;
+    return err;
   }
 
   async getUser(id: string): Promise<User | undefined> {
@@ -82,6 +94,13 @@ export class DatabaseStorage implements IStorage {
   async createLead(insertLead: InsertLead, userId?: string): Promise<Lead> {
     // userId must be provided to associate the lead with a user
     if (!userId) throw new Error("userId is required to create a lead");
+    // Check for existing email to avoid duplicate key DB errors
+    if (insertLead.email) {
+      const [existing] = await db.select().from(leads).where(eq(leads.email, insertLead.email));
+      if (existing) {
+        throw this.ConflictError("A lead with that email already exists");
+      }
+    }
 
     const insertValues: any = {
       ...insertLead,
@@ -100,6 +119,11 @@ export class DatabaseStorage implements IStorage {
 
   async getLead(id: string): Promise<Lead | undefined> {
     const [lead] = await db.select().from(leads).where(eq(leads.id, id));
+    return lead;
+  }
+
+  async getLeadForUser(id: string, userId: string): Promise<Lead | undefined> {
+    const [lead] = await db.select().from(leads).where(and(eq(leads.id, id), eq(leads.userId, userId)));
     return lead;
   }
 
@@ -177,9 +201,9 @@ export class DatabaseStorage implements IStorage {
       }
     }
 
-    const whereCondition = conditions.length > 0 ? and(...conditions) : undefined;
+  const whereCondition = conditions.length > 0 ? and(...conditions) : undefined;
 
-    // Get total count
+    // Get total count (without user filter here; use wrapper if user filtering is needed)
     const [totalResult] = await db
       .select({ count: count() })
       .from(leads)
@@ -219,6 +243,139 @@ export class DatabaseStorage implements IStorage {
     };
   }
 
+  async getLeadsForUser(filters: LeadFilters, pagination: PaginationOptions, userId: string): Promise<PaginatedResponse<Lead>> {
+    // Reuse getLeads logic but enforce userId in the where clause
+    const conditions: any[] = [];
+
+    if (filters.search) {
+      const searchTerm = `%${filters.search}%`;
+      conditions.push(
+        or(
+          like(leads.firstName, searchTerm),
+          like(leads.lastName, searchTerm),
+          like(leads.email, searchTerm),
+          like(leads.company, searchTerm)
+        )
+      );
+    }
+
+    if (filters.status && filters.status.length > 0) {
+      conditions.push(inArray(leads.status, filters.status as any));
+    }
+
+    if (filters.source && filters.source.length > 0) {
+      conditions.push(inArray(leads.source, filters.source as any));
+    }
+
+    if (filters.scoreMin !== undefined || filters.scoreMax !== undefined) {
+      if (filters.scoreMin !== undefined && filters.scoreMax !== undefined) {
+        conditions.push(between(leads.score, filters.scoreMin, filters.scoreMax));
+      } else if (filters.scoreMin !== undefined) {
+        conditions.push(gte(leads.score, filters.scoreMin));
+      } else if (filters.scoreMax !== undefined) {
+        conditions.push(lte(leads.score, filters.scoreMax));
+      }
+    }
+
+    if (filters.valueMin !== undefined || filters.valueMax !== undefined) {
+      if (filters.valueMin !== undefined && filters.valueMax !== undefined) {
+        conditions.push(between(leads.leadValue, filters.valueMin.toString(), filters.valueMax.toString()));
+      } else if (filters.valueMin !== undefined) {
+        conditions.push(gte(leads.leadValue, filters.valueMin.toString()));
+      } else if (filters.valueMax !== undefined) {
+        conditions.push(lte(leads.leadValue, filters.valueMax.toString()));
+      }
+    }
+
+    if (filters.isQualified !== undefined) {
+      conditions.push(eq(leads.isQualified, filters.isQualified));
+    }
+
+    if (filters.createdAfter || filters.createdBefore) {
+      if (filters.createdAfter && filters.createdBefore) {
+        conditions.push(between(leads.createdAt, filters.createdAfter, filters.createdBefore));
+      } else if (filters.createdAfter) {
+        conditions.push(gte(leads.createdAt, filters.createdAfter));
+      } else if (filters.createdBefore) {
+        conditions.push(lte(leads.createdAt, filters.createdBefore));
+      }
+    }
+
+    if (filters.lastActivityAfter || filters.lastActivityBefore) {
+      if (filters.lastActivityAfter && filters.lastActivityBefore) {
+        conditions.push(between(leads.lastActivityAt, filters.lastActivityAfter, filters.lastActivityBefore));
+      } else if (filters.lastActivityAfter) {
+        conditions.push(gte(leads.lastActivityAt, filters.lastActivityAfter));
+      } else if (filters.lastActivityBefore) {
+        conditions.push(lte(leads.lastActivityAt, filters.lastActivityBefore));
+      }
+    }
+
+    // Enforce ownership
+    conditions.push(eq(leads.userId, userId));
+
+    const whereCondition = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const [totalResult] = await db
+      .select({ count: count() })
+      .from(leads)
+      .where(whereCondition);
+
+    const total = totalResult.count;
+    const offset = (pagination.page - 1) * pagination.limit;
+
+    const sortableColumns: Record<string, any> = {
+      createdAt: leads.createdAt,
+      updatedAt: leads.updatedAt,
+      score: leads.score,
+      leadValue: leads.leadValue,
+      firstName: leads.firstName,
+      lastName: leads.lastName,
+    };
+
+    const sortColumn = pagination.sortBy && sortableColumns[pagination.sortBy] ? sortableColumns[pagination.sortBy] : leads.createdAt;
+    const orderBy = pagination.sortOrder === 'asc' ? asc(sortColumn) : desc(sortColumn);
+
+    const data = await db
+      .select()
+      .from(leads)
+      .where(whereCondition)
+      .orderBy(orderBy)
+      .limit(pagination.limit)
+      .offset(offset);
+
+    return {
+      data,
+      page: pagination.page,
+      limit: pagination.limit,
+      total,
+      totalPages: Math.ceil(total / pagination.limit),
+    };
+  }
+
+  async updateLeadForUser(id: string, updates: UpdateLead, userId: string): Promise<Lead | undefined> {
+    const setValues: any = {
+      ...updates,
+      updatedAt: new Date(),
+    };
+
+    if (updates.leadValue !== undefined) {
+      setValues.leadValue = updates.leadValue.toString();
+    }
+
+    const [lead] = await db
+      .update(leads)
+      .set(setValues)
+      .where(and(eq(leads.id, id), eq(leads.userId, userId)))
+      .returning();
+    return lead;
+  }
+
+  async deleteLeadForUser(id: string, userId: string): Promise<boolean> {
+    const result = await db.delete(leads).where(and(eq(leads.id, id), eq(leads.userId, userId)));
+    return !!(result && (result as any).rowCount);
+  }
+
   async updateLead(id: string, updates: UpdateLead): Promise<Lead | undefined> {
     const setValues: any = {
       ...updates,
@@ -227,6 +384,12 @@ export class DatabaseStorage implements IStorage {
 
     if (updates.leadValue !== undefined) {
       setValues.leadValue = updates.leadValue.toString();
+    }
+
+    // If email is being updated, ensure it's not used by another lead
+    if (updates.email) {
+      const [existing] = await db.select().from(leads).where(and(eq(leads.email, updates.email), not(eq(leads.id, id))));
+      if (existing) throw this.ConflictError("A lead with that email already exists");
     }
 
     const [lead] = await db

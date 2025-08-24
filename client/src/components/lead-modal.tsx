@@ -214,7 +214,7 @@ export default function LeadModal({ open, onOpenChange, lead, onClose }: LeadMod
                   <FormItem>
                     <FormLabel>Phone</FormLabel>
                     <FormControl>
-                      <Input {...field} type="tel" placeholder="Enter phone number" data-testid="input-phone" />
+                      <Input {...field} type="tel" placeholder="Enter phone number" data-testid="input-phone" value={field.value ?? ""} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -231,7 +231,7 @@ export default function LeadModal({ open, onOpenChange, lead, onClose }: LeadMod
                   <FormItem>
                     <FormLabel>Company</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="Enter company name" data-testid="input-company" />
+                      <Input {...field} placeholder="Enter company name" data-testid="input-company" value={field.value ?? ""} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -245,7 +245,7 @@ export default function LeadModal({ open, onOpenChange, lead, onClose }: LeadMod
                   <FormItem>
                     <FormLabel>City</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="Enter city" data-testid="input-city" />
+                      <Input {...field} placeholder="Enter city" data-testid="input-city" value={field.value ?? ""} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -259,7 +259,7 @@ export default function LeadModal({ open, onOpenChange, lead, onClose }: LeadMod
                   <FormItem>
                     <FormLabel>State</FormLabel>
                     <FormControl>
-                      <Input {...field} placeholder="Enter state" data-testid="input-state" />
+                      <Input {...field} placeholder="Enter state" data-testid="input-state" value={field.value ?? ""} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>

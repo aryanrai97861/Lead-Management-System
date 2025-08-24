@@ -15,11 +15,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/leads", requireAuth, async (req, res, next) => {
     try {
   const validatedData = insertLeadSchema.parse(req.body);
-  const lead = await storage.createLead(validatedData, (req as any).user.id);
+      const lead = await storage.createLead(validatedData, (req as any).user.id);
       res.status(201).json(lead);
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
+      }
+      if ((error as any).statusCode === 409) {
+        return res.status(409).json({ message: (error as any).message });
       }
       next(error);
     }
@@ -72,7 +75,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sortOrder: sortOrder as 'asc' | 'desc'
       };
 
-      const result = await storage.getLeads(filters, pagination);
+  const result = await (storage.getLeadsForUser ? storage.getLeadsForUser(filters, pagination, (req as any).user.id) : storage.getLeads(filters, pagination));
       res.json(result);
     } catch (error) {
       next(error);
@@ -82,7 +85,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Get single lead
   app.get("/api/leads/:id", requireAuth, async (req, res, next) => {
     try {
-      const lead = await storage.getLead(req.params.id);
+      const lead = await (storage.getLeadForUser ? storage.getLeadForUser(req.params.id, (req as any).user.id) : storage.getLead(req.params.id));
       if (!lead) {
         return res.status(404).json({ message: "Lead not found" });
       }
@@ -96,7 +99,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.put("/api/leads/:id", requireAuth, async (req, res, next) => {
     try {
       const validatedData = updateLeadSchema.parse(req.body);
-      const lead = await storage.updateLead(req.params.id, validatedData);
+      const lead = await (storage.updateLeadForUser ? storage.updateLeadForUser(req.params.id, validatedData, (req as any).user.id) : storage.updateLead(req.params.id, validatedData));
       if (!lead) {
         return res.status(404).json({ message: "Lead not found" });
       }
@@ -105,6 +108,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ message: "Validation error", errors: error.errors });
       }
+      if ((error as any).statusCode === 409) {
+        return res.status(409).json({ message: (error as any).message });
+      }
       next(error);
     }
   });
@@ -112,7 +118,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Delete lead
   app.delete("/api/leads/:id", requireAuth, async (req, res, next) => {
     try {
-      const success = await storage.deleteLead(req.params.id);
+  const success = await (storage.deleteLeadForUser ? storage.deleteLeadForUser(req.params.id, (req as any).user.id) : storage.deleteLead(req.params.id));
       if (!success) {
         return res.status(404).json({ message: "Lead not found" });
       }
