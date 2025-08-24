@@ -1,12 +1,12 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic } from "./vite";
+import cookieParser from "cookie-parser";
 
 const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
-
-// Remove session-related middleware since we're using JWT now
+app.use(cookieParser()); // Add this line
 
 app.use((req, res, next) => {
   const start = Date.now();

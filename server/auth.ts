@@ -4,7 +4,6 @@ import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
-import cookieParser from "cookie-parser";
 
 declare global {
   namespace Express {
@@ -15,76 +14,108 @@ declare global {
 const scryptAsync = promisify(scrypt);
 
 // JWT configuration
-const JWT_SECRET = process.env.JWT_SECRET || "your-super-secret-jwt-key-change-in-production";
-const JWT_EXPIRES_IN = "24h";
-const COOKIE_NAME = "auth_token";
+const JWT_SECRET = process.env.JWT_SECRET || "fallback-jwt-secret-change-in-production";
+const JWT_EXPIRES_IN = "7d";
 
-async function hashPassword(password: string) {
+// Password hashing functions
+async function hashPassword(password: string): Promise<string> {
   const salt = randomBytes(16).toString("hex");
   const buf = (await scryptAsync(password, salt, 64)) as Buffer;
   return `${buf.toString("hex")}.${salt}`;
 }
 
-async function comparePasswords(supplied: string, stored: string) {
-  const [hashed, salt] = stored.split(".");
-  const hashedBuf = Buffer.from(hashed, "hex");
-  const suppliedBuf = (await scryptAsync(supplied, salt, 64)) as Buffer;
-  return timingSafeEqual(hashedBuf, suppliedBuf);
+async function comparePasswords(password: string, hash: string): Promise<boolean> {
+  const [hashedPassword, salt] = hash.split(".");
+  const hashedPasswordBuf = Buffer.from(hashedPassword, "hex");
+  const suppliedPasswordBuf = (await scryptAsync(password, salt, 64)) as Buffer;
+  return timingSafeEqual(hashedPasswordBuf, suppliedPasswordBuf);
 }
 
+// JWT functions
 function generateToken(userId: string): string {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 }
 
 function verifyToken(token: string): { userId: string } | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
-    return decoded;
-  } catch (error) {
+    return jwt.verify(token, JWT_SECRET) as { userId: string };
+  } catch {
     return null;
   }
 }
 
-function setAuthCookie(res: Response, token: string) {
-  res.cookie(COOKIE_NAME, token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
-  });
+// Middleware to extract user from JWT
+export async function authenticateToken(req: Request, res: Response, next: NextFunction) {
+  const token = req.cookies.auth_token;
+
+  if (!token) {
+    return next();
+  }
+
+  const decoded = verifyToken(token);
+  if (!decoded) {
+    // Clear invalid token
+    res.clearCookie("auth_token");
+    return next();
+  }
+
+  try {
+    const user = await storage.getUser(decoded.userId);
+    if (user) {
+      req.user = user;
+    }
+  } catch (error) {
+    console.error("Error fetching user:", error);
+  }
+
+  next();
 }
 
-function clearAuthCookie(res: Response) {
-  res.clearCookie(COOKIE_NAME, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict",
-  });
+// Middleware to require authentication
+export function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (!req.user) {
+    return res.status(401).json({ message: "No authentication token provided" });
+  }
+  next();
 }
 
 export function setupAuth(app: Express) {
-  // Add cookie parser middleware
-  app.use(cookieParser());
+  // Apply authentication middleware to all routes
+  app.use(authenticateToken);
 
   // Register endpoint
   app.post("/api/register", async (req, res, next) => {
     try {
-      const existingUser = await storage.getUserByUsername(req.body.username);
+      const { username, password } = req.body;
+
+      if (!username || !password) {
+        return res.status(400).json({ message: "Username and password are required" });
+      }
+
+      const existingUser = await storage.getUserByUsername(username);
       if (existingUser) {
         return res.status(400).json({ message: "Username already exists" });
       }
 
+      const hashedPassword = await hashPassword(password);
       const user = await storage.createUser({
-        ...req.body,
-        password: await hashPassword(req.body.password),
+        username,
+        password: hashedPassword,
       });
 
       // Generate JWT token
       const token = generateToken(user.id);
-      setAuthCookie(res, token);
+
+      // Set httpOnly cookie
+      res.cookie("auth_token", token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
 
       // Return user without password
-      const { password, ...userWithoutPassword } = user;
+      const { password: _, ...userWithoutPassword } = user;
       res.status(201).json(userWithoutPassword);
     } catch (error) {
       next(error);
@@ -107,7 +138,14 @@ export function setupAuth(app: Express) {
 
       // Generate JWT token
       const token = generateToken(user.id);
-      setAuthCookie(res, token);
+
+      // Set httpOnly cookie
+      res.cookie("auth_token", token, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
 
       // Return user without password
       const { password: _, ...userWithoutPassword } = user;
@@ -119,44 +157,18 @@ export function setupAuth(app: Express) {
 
   // Logout endpoint
   app.post("/api/logout", (req, res) => {
-    clearAuthCookie(res);
-    res.status(200).json({ message: "Logged out successfully" });
+    res.clearCookie("auth_token");
+    res.sendStatus(200);
   });
 
   // Get current user endpoint
-  app.get("/api/user", requireAuth, (req, res) => {
-    // User is attached by requireAuth middleware
-    const { password, ...userWithoutPassword } = req.user!;
+  app.get("/api/user", (req, res) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authenticated" });
+    }
+
+    // Return user without password
+    const { password: _, ...userWithoutPassword } = req.user;
     res.json(userWithoutPassword);
   });
-}
-
-export async function requireAuth(req: Request, res: Response, next: NextFunction) {
-  try {
-    const token = req.cookies[COOKIE_NAME];
-
-    if (!token) {
-      return res.status(401).json({ message: "No authentication token provided" });
-    }
-
-    const decoded = verifyToken(token);
-    if (!decoded) {
-      clearAuthCookie(res);
-      return res.status(401).json({ message: "Invalid or expired token" });
-    }
-
-    // Get user from database
-    const user = await storage.getUser(decoded.userId);
-    if (!user) {
-      clearAuthCookie(res);
-      return res.status(401).json({ message: "User not found" });
-    }
-
-    // Attach user to request
-    req.user = user;
-    next();
-  } catch (error) {
-    clearAuthCookie(res);
-    return res.status(401).json({ message: "Authentication failed" });
-  }
 }

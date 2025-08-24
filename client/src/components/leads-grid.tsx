@@ -376,7 +376,7 @@ export default function LeadsGrid({ onEditLead }: LeadsGridProps) {
                     {renderScoreBar(lead.score)}
                   </TableCell>
                   <TableCell className="text-sm font-medium text-gray-900" data-testid={`text-lead-value-${lead.id}`}>
-                    {lead.leadValue ? `$${parseFloat(lead.leadValue).toLocaleString()}` : "—"}
+                    {lead.leadValue ? `${parseFloat(lead.leadValue).toLocaleString()}` : "—"}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center space-x-2">
