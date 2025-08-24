@@ -1,13 +1,10 @@
-import passport from "passport";
-import { Strategy as LocalStrategy } from "passport-local";
-import { Express } from "express";
-import session from "express-session";
+import jwt from "jsonwebtoken";
+import { Express, Request, Response, NextFunction } from "express";
 import { scrypt, randomBytes, timingSafeEqual } from "crypto";
 import { promisify } from "util";
 import { storage } from "./storage";
 import { User as SelectUser } from "@shared/schema";
-import connectPg from "connect-pg-simple";
-import { pool } from "./db";
+import cookieParser from "cookie-parser";
 
 declare global {
   namespace Express {
@@ -16,6 +13,11 @@ declare global {
 }
 
 const scryptAsync = promisify(scrypt);
+
+// JWT configuration
+const JWT_SECRET = process.env.JWT_SECRET || "your-super-secret-jwt-key-change-in-production";
+const JWT_EXPIRES_IN = "24h";
+const COOKIE_NAME = "auth_token";
 
 async function hashPassword(password: string) {
   const salt = randomBytes(16).toString("hex");
@@ -30,53 +32,41 @@ async function comparePasswords(supplied: string, stored: string) {
   return timingSafeEqual(hashedBuf, suppliedBuf);
 }
 
-export function setupAuth(app: Express) {
-  const PostgresSessionStore = connectPg(session);
-  
-  const sessionSettings: session.SessionOptions = {
-    secret: process.env.SESSION_SECRET || "fallback-secret-key-change-in-production",
-    resave: false,
-    saveUninitialized: false,
-    store: new PostgresSessionStore({ 
-      pool, 
-      createTableIfMissing: true 
-    }),
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    },
-  };
+function generateToken(userId: string): string {
+  return jwt.sign({ userId }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+}
 
-  app.set("trust proxy", 1);
-  app.use(session(sessionSettings));
-  app.use(passport.initialize());
-  app.use(passport.session());
+function verifyToken(token: string): { userId: string } | null {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET) as { userId: string };
+    return decoded;
+  } catch (error) {
+    return null;
+  }
+}
 
-  passport.use(
-    new LocalStrategy(async (username, password, done) => {
-      try {
-        const user = await storage.getUserByUsername(username);
-        if (!user || !(await comparePasswords(password, user.password))) {
-          return done(null, false);
-        }
-        return done(null, user);
-      } catch (error) {
-        return done(error);
-      }
-    }),
-  );
-
-  passport.serializeUser((user, done) => done(null, user.id));
-  passport.deserializeUser(async (id: string, done) => {
-    try {
-      const user = await storage.getUser(id);
-      done(null, user);
-    } catch (error) {
-      done(error);
-    }
+function setAuthCookie(res: Response, token: string) {
+  res.cookie(COOKIE_NAME, token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+    maxAge: 24 * 60 * 60 * 1000, // 24 hours
   });
+}
 
+function clearAuthCookie(res: Response) {
+  res.clearCookie(COOKIE_NAME, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "strict",
+  });
+}
+
+export function setupAuth(app: Express) {
+  // Add cookie parser middleware
+  app.use(cookieParser());
+
+  // Register endpoint
   app.post("/api/register", async (req, res, next) => {
     try {
       const existingUser = await storage.getUserByUsername(req.body.username);
@@ -89,35 +79,84 @@ export function setupAuth(app: Express) {
         password: await hashPassword(req.body.password),
       });
 
-      req.login(user, (err) => {
-        if (err) return next(err);
-        res.status(201).json(user);
-      });
+      // Generate JWT token
+      const token = generateToken(user.id);
+      setAuthCookie(res, token);
+
+      // Return user without password
+      const { password, ...userWithoutPassword } = user;
+      res.status(201).json(userWithoutPassword);
     } catch (error) {
       next(error);
     }
   });
 
-  app.post("/api/login", passport.authenticate("local"), (req, res) => {
-    res.status(200).json(req.user);
+  // Login endpoint
+  app.post("/api/login", async (req, res, next) => {
+    try {
+      const { username, password } = req.body;
+
+      if (!username || !password) {
+        return res.status(400).json({ message: "Username and password are required" });
+      }
+
+      const user = await storage.getUserByUsername(username);
+      if (!user || !(await comparePasswords(password, user.password))) {
+        return res.status(401).json({ message: "Invalid credentials" });
+      }
+
+      // Generate JWT token
+      const token = generateToken(user.id);
+      setAuthCookie(res, token);
+
+      // Return user without password
+      const { password: _, ...userWithoutPassword } = user;
+      res.status(200).json(userWithoutPassword);
+    } catch (error) {
+      next(error);
+    }
   });
 
-  app.post("/api/logout", (req, res, next) => {
-    req.logout((err) => {
-      if (err) return next(err);
-      res.sendStatus(200);
-    });
+  // Logout endpoint
+  app.post("/api/logout", (req, res) => {
+    clearAuthCookie(res);
+    res.status(200).json({ message: "Logged out successfully" });
   });
 
-  app.get("/api/user", (req, res) => {
-    if (!req.isAuthenticated()) return res.sendStatus(401);
-    res.json(req.user);
+  // Get current user endpoint
+  app.get("/api/user", requireAuth, (req, res) => {
+    // User is attached by requireAuth middleware
+    const { password, ...userWithoutPassword } = req.user!;
+    res.json(userWithoutPassword);
   });
 }
 
-export function requireAuth(req: any, res: any, next: any) {
-  if (!req.isAuthenticated()) {
-    return res.status(401).json({ message: "Unauthorized" });
+export async function requireAuth(req: Request, res: Response, next: NextFunction) {
+  try {
+    const token = req.cookies[COOKIE_NAME];
+
+    if (!token) {
+      return res.status(401).json({ message: "No authentication token provided" });
+    }
+
+    const decoded = verifyToken(token);
+    if (!decoded) {
+      clearAuthCookie(res);
+      return res.status(401).json({ message: "Invalid or expired token" });
+    }
+
+    // Get user from database
+    const user = await storage.getUser(decoded.userId);
+    if (!user) {
+      clearAuthCookie(res);
+      return res.status(401).json({ message: "User not found" });
+    }
+
+    // Attach user to request
+    req.user = user;
+    next();
+  } catch (error) {
+    clearAuthCookie(res);
+    return res.status(401).json({ message: "Authentication failed" });
   }
-  next();
 }
