@@ -95,10 +95,13 @@ export class DatabaseStorage implements IStorage {
     // userId must be provided to associate the lead with a user
     if (!userId) throw new Error("userId is required to create a lead");
     // Check for existing email to avoid duplicate key DB errors
-    // Ensure email is unique across user's leads (or globally depending on requirement)
-    const [existing] = await db.select().from(leads).where(eq(leads.email, insertLead.email));
+    // Ensure email is unique for this user
+    const [existing] = await db
+      .select()
+      .from(leads)
+      .where(and(eq(leads.email, insertLead.email), eq(leads.userId, userId)));
     if (existing) {
-      throw this.ConflictError("A lead with this email already exists");
+      throw this.ConflictError("A lead with this email already exists for this user");
     }
 
     const insertValues: any = {
@@ -362,11 +365,14 @@ export class DatabaseStorage implements IStorage {
       setValues.leadValue = updates.leadValue.toString();
     }
 
-    // If email is being updated, ensure uniqueness for other leads
+    // If email is being updated, ensure uniqueness for other leads of this user
     if (updates.email) {
-      const [existing] = await db.select().from(leads).where(and(eq(leads.email, updates.email), not(eq(leads.id, id))));
+      const [existing] = await db
+        .select()
+        .from(leads)
+        .where(and(eq(leads.email, updates.email), eq(leads.userId, userId), not(eq(leads.id, id))));
       if (existing) {
-        throw this.ConflictError("A lead with this email already exists");
+        throw this.ConflictError("A lead with this email already exists for this user");
       }
     }
 
@@ -394,9 +400,27 @@ export class DatabaseStorage implements IStorage {
     }
 
     if (updates.email) {
-      const [existing] = await db.select().from(leads).where(and(eq(leads.email, updates.email), not(eq(leads.id, id))));
-      if (existing) {
-        throw this.ConflictError("A lead with this email already exists");
+      // Find the lead being updated to get its userId
+      const [currentLead] = await db.select().from(leads).where(eq(leads.id, id));
+      const leadUserId = currentLead ? (currentLead as any).userId : undefined;
+
+      if (leadUserId) {
+        const [existing] = await db
+          .select()
+          .from(leads)
+          .where(and(eq(leads.email, updates.email), eq(leads.userId, leadUserId), not(eq(leads.id, id))));
+        if (existing) {
+          throw this.ConflictError("A lead with this email already exists for this user");
+        }
+      } else {
+        // Fallback to global uniqueness check if we can't determine userId
+        const [existing] = await db
+          .select()
+          .from(leads)
+          .where(and(eq(leads.email, updates.email), not(eq(leads.id, id))));
+        if (existing) {
+          throw this.ConflictError("A lead with this email already exists");
+        }
       }
     }
 
