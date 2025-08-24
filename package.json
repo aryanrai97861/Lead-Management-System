@@ -105,11 +105,11 @@
     "postcss": "^8.4.47",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.19.1",
-    "typescript": "5.6.3"
-  },
-  "devDependencies": {
+    "typescript": "5.6.3",
     "@replit/vite-plugin-runtime-error-modal": "^0.0.3",
     "@replit/vite-plugin-cartographer": "^0.3.0"
+  },
+  "devDependencies": {
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"
