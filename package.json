@@ -59,9 +59,7 @@
     "wouter": "^3.3.5",
     "ws": "^8.18.0",
     "zod": "^3.24.2",
-    "zod-validation-error": "^3.4.0"
-  },
-  "devDependencies": {
+    "zod-validation-error": "^3.4.0",
     "@replit/vite-plugin-cartographer": "^0.3.0",
     "@replit/vite-plugin-runtime-error-modal": "^0.0.3",
     "@tailwindcss/typography": "^0.5.16",
@@ -80,6 +78,8 @@
     "drizzle-kit": "^0.30.4",
     "tsx": "^4.19.1",
     "typescript": "5.6.3"
+  },
+  "devDependencies": {
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"
